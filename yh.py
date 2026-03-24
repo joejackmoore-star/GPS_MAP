@@ -522,14 +522,6 @@ def plot_on_map(results, lat_deg=53.4670, lon_deg=-2.2305):
         location=[lat_deg, lon_deg],  
         zoom_start=16,               
         tiles="CartoDB positron"  )  
-
-    folium.Marker(
-        location=[lat_deg, lon_deg],
-        popup="True position (Manchester)",
-        icon=folium.Icon(color="purple", icon="crosshairs", prefix="fa")
-    ).add_to(m)
-
-    
     
     folium.PolyLine(
         locations=coords_unc,
@@ -549,22 +541,74 @@ def plot_on_map(results, lat_deg=53.4670, lon_deg=-2.2305):
 
 
 
-    if coords_corr:
-        folium.CircleMarker(
-            location=coords_corr[0],
-            radius=5, color="#1D9E75", fill=True, fill_opacity=1,
-            tooltip="Corrected: t=0"
-        ).add_to(m)
-        
-    if coords_unc:
-            folium.CircleMarker(
-                location=coords_unc[0],
-                radius=5, color="#D85A30", fill=True, fill_opacity=1,
-                tooltip="Uncorrected: t=0"
-            ).add_to(m)
-            
+   
     
     plugins.MeasureControl(position='bottomleft', primary_length_unit='metres').add_to(m)
+    
+# Exact conversion factors for Manchester's latitude
+    metres_per_deg_lat = 111_320.0
+    metres_per_deg_lon = 111_320.0 * np.cos(np.deg2rad(lat_deg))
+
+# Convert desired metre offsets to exact degree offsets
+    m_offsets = [-500, -400, -300, -200, -100, 100, 200, 300, 400, 500]
+
+    lat_offsets = [d / metres_per_deg_lat for d in m_offsets]  # North-South
+    lon_offsets = [d / metres_per_deg_lon for d in m_offsets]  # East-West
+
+    labels = ['-500m', '-400m', '-300m', '-200m', '-100m', 
+              '+100m', '+200m', '+300m', '+400m', '+500m']
+
+# Tighter label offset (closer to axis line)
+    label_nudge_lat = 15 / metres_per_deg_lat   # 50m nudge south of EW axis
+    label_nudge_lon = 35 / metres_per_deg_lon   # 80m nudge west of NS axis
+
+    crosshair_js = f"""
+<script>
+function addAxes(map) {{
+    L.polyline([
+        [{lat_deg}, {lon_deg - 600/metres_per_deg_lon}],
+        [{lat_deg}, {lon_deg + 600/metres_per_deg_lon}]
+    ], {{ color: 'black', weight: 1.5, dashArray: '5,5', opacity: 0.7 
+    }}).addTo(map).bindTooltip('East-West axis');
+
+    L.polyline([
+        [{lat_deg - 600/metres_per_deg_lat}, {lon_deg}],
+        [{lat_deg + 600/metres_per_deg_lat}, {lon_deg}]
+    ], {{ color: 'black', weight: 1.5, dashArray: '5,5', opacity: 0.7 
+    }}).addTo(map).bindTooltip('North-South axis');
+
+    var lon_offsets = {lon_offsets};
+    var lat_offsets = {lat_offsets};
+    var labels     = {labels};
+
+    lon_offsets.forEach(function(offset, i) {{
+        // East-West labels (sit just below the EW axis line)
+        L.marker([{lat_deg} - {label_nudge_lat}, {lon_deg} + offset], {{
+            icon: L.divIcon({{
+                html: '<div style="font-size:9px;color:black;white-space:nowrap;">' + labels[i] + '</div>',
+                className: ''
+            }})
+        }}).addTo(map);
+    }});
+
+    lat_offsets.forEach(function(offset, i) {{
+        // North-South labels (sit just left of the NS axis line)
+        L.marker([{lat_deg} + offset, {lon_deg} - {label_nudge_lon}], {{
+            icon: L.divIcon({{
+                html: '<div style="font-size:9px;color:black;white-space:nowrap;">' + labels[i] + '</div>',
+                className: ''
+            }})
+        }}).addTo(map);
+    }});
+}}
+
+document.addEventListener('DOMContentLoaded', function() {{
+    var mapObj = Object.values(window).find(v => v instanceof L.Map);
+    if (mapObj) addAxes(mapObj);
+}});
+</script>
+"""
+    m.get_root().html.add_child(folium.Element(crosshair_js))
     
     output_path = "gps_simulation_map.html"
     m.save(output_path) 
