@@ -32,7 +32,7 @@ GPS_ALTITUDE = 20_200_000.0
 A_ORBIT = OSGB36_A + GPS_ALTITUDE
 
 # Orbital inclination of satellites (degrees to radians)
-INC = np.deg2rad(55.0)
+INC = np.deg2rad(61.0)
 
 # Mean speed in rad per second, derived from keplers third law
 N_MEAN = np.sqrt(MU / A_ORBIT**3)
@@ -529,21 +529,22 @@ def plot_on_map(results, lat_deg=53.4670, lon_deg=-2.2305):
         icon=folium.Icon(color="purple", icon="crosshairs", prefix="fa")
     ).add_to(m)
 
-    folium.PolyLine(
-        locations=coords_corr,
-        color="#1D9E75",          
-        weight=2,               
-        opacity=0.85,      
-        tooltip="Corrected (relativity applied)"
-    ).add_to(m)
     
     
     folium.PolyLine(
         locations=coords_unc,
         color="#D85A30",        
-        weight=2,
-        opacity=0.85,
+        weight=1,
+        opacity=0.6,
         tooltip="Uncorrected (relativity ignored)"
+    ).add_to(m)
+    
+    folium.PolyLine(
+        locations=coords_corr,
+        color="#1D9E75",          
+        weight=2,               
+        opacity=1.0,      
+        tooltip="Corrected (relativity applied)"
     ).add_to(m)
 
 
@@ -570,25 +571,14 @@ def plot_on_map(results, lat_deg=53.4670, lon_deg=-2.2305):
     print(f"Map saved to {output_path} — open in any browser.")
     return m
 
-from pyngrok import ngrok
-import http.server, threading, os
 
-# Serve current directory
-os.chdir("C:/Users/ASUS/OneDrive - The University of Manchester/GPS Group Project/New folder")
-handler = http.server.SimpleHTTPRequestHandler
-server = http.server.HTTPServer(("", 8000), handler)
-thread = threading.Thread(target=server.serve_forever)
-thread.daemon = True
-thread.start()
+# Your live GitHub Pages URL
+url = "https://joejackmoore-star.github.io/GPS_MAP/gps_simulation_map.html"
 
-# Create public tunnel
-public_url = ngrok.connect(8000)
-print(f"Public URL: {public_url}")  # Share this or make QR from it
-
-
-qr = qrcode.make(str(public_url) + "/gps_simulation_map.html")
+# Generate QR code
+qr = qrcode.make(url)
 qr.save("map_qr.png")
-
+print("QR code saved as map_qr.png")
 
 if __name__ == "__main__":
     results = run_simulation()
