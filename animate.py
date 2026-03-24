@@ -481,138 +481,209 @@ def plot_results(results):
     plt.tight_layout()
     plt.show()
 
-def plot_on_map(results, lat_deg=53.4670, lon_deg=-2.2305):
-    """
-    Plot corrected and uncorrected receiver tracks on an interactive map.
-    Saves to gps_simulation_map.html.
+def plot_on_map_animated(results, lat_deg=53.4670, lon_deg=-2.2305):
     
-    Args:
-        results : dict returned by run_simulation()
-        lat_deg : true receiver latitude (Manchester)
-        lon_deg : true receiver longitude
-    """
-
-
     enu_corr = results["enu_corr"]
     enu_unc  = results["enu_unc"]
-
-    metres_per_deg_lat = 111_320.0                                        
-    metres_per_deg_lon = 111_320.0 * np.cos(np.deg2rad(lat_deg))       
+    times    = results["times"]
+    
+    metres_per_deg_lat = 111_320.0
+    metres_per_deg_lon = 111_320.0 * np.cos(np.deg2rad(lat_deg))
 
     def enu_to_latlon(enu_errors):
-        """Convert (N, 3) ENU error array to absolute (lat, lon) arrays."""
-        delta_lat = enu_errors[:, 1] / metres_per_deg_lat  
-        delta_lon = enu_errors[:, 0] / metres_per_deg_lon   
-
-        lats = lat_deg + delta_lat
-        lons = lon_deg + delta_lon
-        return lats, lons
+        delta_lat = enu_errors[:, 1] / metres_per_deg_lat
+        delta_lon = enu_errors[:, 0] / metres_per_deg_lon
+        return lat_deg + delta_lat, lon_deg + delta_lon
 
     lats_corr, lons_corr = enu_to_latlon(enu_corr)
     lats_unc,  lons_unc  = enu_to_latlon(enu_unc)
 
-    valid_corr = ~np.isnan(lats_corr)
-    valid_unc  = ~np.isnan(lats_unc)
-    
-    coords_corr = list(zip(lats_corr[valid_corr], lons_corr[valid_corr]))
-    coords_unc  = list(zip(lats_unc[valid_unc],   lons_unc[valid_unc]))
-                                                
+    valid = ~np.isnan(lats_corr) & ~np.isnan(lats_unc)
+
+    # Print to verify full 100 hours is covered
+    valid_times = times[valid]
+    print(f"First timestep: {valid_times[0]/3600:.2f} hours")
+    print(f"Last timestep:  {valid_times[-1]/3600:.2f} hours")
+    print(f"Total valid points: {valid.sum()}")
+
+    lats_corr = lats_corr[valid]
+    lons_corr = lons_corr[valid]
+    lats_unc  = lats_unc[valid]
+    lons_unc  = lons_unc[valid]
+
+    # Use ALL points — no downsampling
+    # Animation speed auto-adjusts to fit 10 seconds
+    coords_corr_js = [[float(lat), float(lon)] for lat, lon in zip(lats_corr, lons_corr)]
+    coords_unc_js  = [[float(lat), float(lon)] for lat, lon in zip(lats_unc,  lons_unc)]
+
+    print(f"Total frames in animation: {len(coords_corr_js)}")
 
     m = folium.Map(
-        location=[lat_deg, lon_deg],  
-        zoom_start=16,               
-        tiles="CartoDB positron"  )  
-    
-    folium.PolyLine(
-        locations=coords_unc,
-        color="#D85A30",        
-        weight=1,
-        opacity=0.6,
-        tooltip="Uncorrected (relativity ignored)"
-    ).add_to(m)
-    
-    folium.PolyLine(
-        locations=coords_corr,
-        color="#1D9E75",          
-        weight=2,               
-        opacity=1.0,      
-        tooltip="Corrected (relativity applied)"
-    ).add_to(m)
+        location=[lat_deg, lon_deg],
+        zoom_start=19,
+        tiles="CartoDB positron"
+    )
 
+    animation_js = f"""
+    <script>
+    var coordsCorr  = {coords_corr_js};
+    var coordsUnc   = {coords_unc_js};
+    var totalFrames  = coordsCorr.length;
+    var duration     = 10000;        // 10 seconds total
+    var frameInterval = duration / totalFrames;
+    var currentFrame = 0;
+    var animationTimer = null;
+    var polylineCorr = null;
+    var polylineUnc  = null;
+    var drawnCorr = [];
+    var drawnUnc  = [];
+    var isPlaying = false;
 
+    document.addEventListener('DOMContentLoaded', function() {{
+        var mapObj = Object.values(window).find(v => v instanceof L.Map);
+        if (!mapObj) return;
 
-   
+        polylineUnc = L.polyline([], {{
+            color: '#D85A30',
+            weight: 1,
+            opacity: 0.5
+        }}).addTo(mapObj);
+        
+        polylineCorr = L.polyline([], {{
+            color: '#1D9E75',
+            weight: 1,
+            opacity: 1.0
+        }}).addTo(mapObj);
+
+        // Legend
+        var legend = L.control({{position: 'topright'}});
+        legend.onAdd = function() {{
+            var div = L.DomUtil.create('div');
+            div.innerHTML =
+                '<div style="background:white;padding:8px;border-radius:4px;font-size:12px;line-height:1.8;">' +
+                '<span style="color:#1D9E75;font-weight:bold;">— </span>Corrected<br>' +
+                '<span style="color:#D85A30;font-weight:bold;">— </span>Uncorrected' +
+                '</div>';
+            return div;
+        }};
+        legend.addTo(mapObj);
+
+        // Play button
+        var btn = L.control({{position: 'bottomright'}});
+        btn.onAdd = function() {{
+            var div = L.DomUtil.create('div');
+            div.innerHTML = '<button id="playBtn" style="' +
+                'padding:8px 16px;font-size:14px;background:#333;' +
+                'color:white;border:none;border-radius:4px;cursor:pointer;">' +
+                '▶ Play</button>';
+            return div;
+        }};
+        btn.addTo(mapObj);
+
+        document.getElementById('playBtn').addEventListener('click', function() {{
+            if (isPlaying) return;
+
+            // Reset
+            currentFrame = 0;
+            drawnCorr = [];
+            drawnUnc  = [];
+            polylineCorr.setLatLngs([]);
+            polylineUnc.setLatLngs([]);
+            isPlaying = true;
+            this.textContent = '⏸ Playing...';
+            var btnRef = this;
+
+            animationTimer = setInterval(function() {{
+                if (currentFrame >= totalFrames) {{
+                    clearInterval(animationTimer);
+                    isPlaying = false;
+                    btnRef.textContent = '▶ Play';
+                    return;
+                }}
+
+                // Add points in batches to keep 10 second duration
+                // regardless of total frame count
+                drawnCorr.push(coordsCorr[currentFrame]);
+                drawnUnc.push(coordsUnc[currentFrame]);
+                polylineCorr.setLatLngs(drawnCorr);
+                polylineUnc.setLatLngs(drawnUnc);
+                currentFrame++;
+            }}, frameInterval);
+        }});
+    }});
+    </script>
+    """
+
+    m.get_root().html.add_child(folium.Element(animation_js))
     
-    plugins.MeasureControl(position='bottomleft', primary_length_unit='metres').add_to(m)
-    
-# Exact conversion factors for Manchester's latitude
+    # Exact conversion factors for Manchester's latitude
     metres_per_deg_lat = 111_320.0
     metres_per_deg_lon = 111_320.0 * np.cos(np.deg2rad(lat_deg))
 
-# Convert desired metre offsets to exact degree offsets
-    m_offsets = [-500, -400, -300, -200, -100, 100, 200, 300, 400, 500]
+    # Convert desired metre offsets to exact degree offsets
+    m_offsets = [-500, -450, -400, -350, -300, -250, -200, -150, -100, -75, -50, -25, 25, 50, 75, 100, 150, 200, 250, 300, 350, 400, 450, 500]
 
     lat_offsets = [d / metres_per_deg_lat for d in m_offsets]  # North-South
     lon_offsets = [d / metres_per_deg_lon for d in m_offsets]  # East-West
 
-    labels = ['-500m', '-400m', '-300m', '-200m', '-100m', 
-              '+100m', '+200m', '+300m', '+400m', '+500m']
+    labels = ['-500m', '-450m', '-400m', '-350m', '-300m', '-250m', '-200m', '-150m', '-100m', '-75m', '-50m' ,'-25m', 
+              '25m', '50m' ,'75m', '+100m', '150m', '+200m', '250m',  '+300m', '350m',  '+400m', '450m', '+500m']
 
-# Tighter label offset (closer to axis line)
-    label_nudge_lat = 15 / metres_per_deg_lat   # 50m nudge south of EW axis
-    label_nudge_lon = 35 / metres_per_deg_lon   # 80m nudge west of NS axis
+    # Tighter label offset (closer to axis line)
+    label_nudge_lat = 5 / metres_per_deg_lat   # 50m nudge south of EW axis
+    label_nudge_lon = 5 / metres_per_deg_lon   # 80m nudge west of NS axis
 
     crosshair_js = f"""
-<script>
-function addAxes(map) {{
-    L.polyline([
-        [{lat_deg}, {lon_deg - 600/metres_per_deg_lon}],
-        [{lat_deg}, {lon_deg + 600/metres_per_deg_lon}]
-    ], {{ color: 'black', weight: 1.5, dashArray: '5,5', opacity: 0.7 
-    }}).addTo(map).bindTooltip('East-West axis');
+    <script>
+    function addAxes(map) {{
+        L.polyline([
+            [{lat_deg}, {lon_deg - 600/metres_per_deg_lon}],
+            [{lat_deg}, {lon_deg + 600/metres_per_deg_lon}]
+        ], {{ color: 'black', weight: 1.5, dashArray: '5,5', opacity: 0.7 
+        }}).addTo(map).bindTooltip('East-West axis');
 
-    L.polyline([
-        [{lat_deg - 600/metres_per_deg_lat}, {lon_deg}],
-        [{lat_deg + 600/metres_per_deg_lat}, {lon_deg}]
-    ], {{ color: 'black', weight: 1.5, dashArray: '5,5', opacity: 0.7 
-    }}).addTo(map).bindTooltip('North-South axis');
+        L.polyline([
+            [{lat_deg - 600/metres_per_deg_lat}, {lon_deg}],
+            [{lat_deg + 600/metres_per_deg_lat}, {lon_deg}]
+        ], {{ color: 'black', weight: 1.5, dashArray: '5,5', opacity: 0.7 
+        }}).addTo(map).bindTooltip('North-South axis');
 
-    var lon_offsets = {lon_offsets};
-    var lat_offsets = {lat_offsets};
-    var labels     = {labels};
+        var lon_offsets = {lon_offsets};
+        var lat_offsets = {lat_offsets};
+        var labels     = {labels};
 
-    lon_offsets.forEach(function(offset, i) {{
-        // East-West labels (sit just below the EW axis line)
-        L.marker([{lat_deg} - {label_nudge_lat}, {lon_deg} + offset], {{
-            icon: L.divIcon({{
-                html: '<div style="font-size:9px;color:black;white-space:nowrap;">' + labels[i] + '</div>',
-                className: ''
-            }})
-        }}).addTo(map);
+        lon_offsets.forEach(function(offset, i) {{
+            // East-West labels (sit just below the EW axis line)
+            L.marker([{lat_deg} - {label_nudge_lat}, {lon_deg} + offset], {{
+                icon: L.divIcon({{
+                    html: '<div style="font-size:9px;color:black;white-space:nowrap;">' + labels[i] + '</div>',
+                    className: ''
+                }})
+            }}).addTo(map);
+        }});
+
+        lat_offsets.forEach(function(offset, i) {{
+            // North-South labels (sit just left of the NS axis line)
+            L.marker([{lat_deg} + offset, {lon_deg} - {label_nudge_lon}], {{
+                icon: L.divIcon({{
+                    html: '<div style="font-size:9px;color:black;white-space:nowrap;">' + labels[i] + '</div>',
+                    className: ''
+                }})
+            }}).addTo(map);
+        }});
+    }}
+
+    document.addEventListener('DOMContentLoaded', function() {{
+        var mapObj = Object.values(window).find(v => v instanceof L.Map);
+        if (mapObj) addAxes(mapObj);
     }});
-
-    lat_offsets.forEach(function(offset, i) {{
-        // North-South labels (sit just left of the NS axis line)
-        L.marker([{lat_deg} + offset, {lon_deg} - {label_nudge_lon}], {{
-            icon: L.divIcon({{
-                html: '<div style="font-size:9px;color:black;white-space:nowrap;">' + labels[i] + '</div>',
-                className: ''
-            }})
-        }}).addTo(map);
-    }});
-}}
-
-document.addEventListener('DOMContentLoaded', function() {{
-    var mapObj = Object.values(window).find(v => v instanceof L.Map);
-    if (mapObj) addAxes(mapObj);
-}});
-</script>
-"""
+    </script>
+    """
     m.get_root().html.add_child(folium.Element(crosshair_js))
-    
-    output_path = "gps_simulation_map.html"
-    m.save(output_path) 
-    print(f"Map saved to {output_path} — open in any browser.")
+
+    output_path = "gps_simulation_map_animated.html"
+    m.save(output_path)
+    print(f"Animated map saved to {output_path}")
     return m
 
 
@@ -627,4 +698,4 @@ print("QR code saved as map_qr.png")
 if __name__ == "__main__":
     results = run_simulation()
     plot_results(results)
-    plot_on_map(results)
+    plot_on_map_animated(results)
