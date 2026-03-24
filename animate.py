@@ -525,94 +525,115 @@ def plot_on_map_animated(results, lat_deg=53.4670, lon_deg=-2.2305):
     )
 
     animation_js = f"""
-    <script>
-    var coordsCorr  = {coords_corr_js};
-    var coordsUnc   = {coords_unc_js};
-    var totalFrames  = coordsCorr.length;
-    var duration     = 10000;        // 10 seconds total
-    var frameInterval = duration / totalFrames;
-    var currentFrame = 0;
-    var animationTimer = null;
-    var polylineCorr = null;
-    var polylineUnc  = null;
-    var drawnCorr = [];
-    var drawnUnc  = [];
-    var isPlaying = false;
+<script>
+var coordsCorr   = {coords_corr_js};
+var coordsUnc    = {coords_unc_js};
+var totalFrames  = coordsCorr.length;
+var duration     = 10000;   // 10 seconds real time
+var frameInterval = duration / totalFrames;
+var currentFrame = 0;
+var animationTimer = null;
+var polylineCorr = null;
+var polylineUnc  = null;
+var drawnCorr = [];
+var drawnUnc  = [];
+var isPlaying = false;
+var timerBox = null;
 
-    document.addEventListener('DOMContentLoaded', function() {{
-        var mapObj = Object.values(window).find(v => v instanceof L.Map);
-        if (!mapObj) return;
+document.addEventListener('DOMContentLoaded', function() {{
+    var mapObj = Object.values(window).find(v => v instanceof L.Map);
+    if (!mapObj) return;
 
-        polylineUnc = L.polyline([], {{
-            color: '#D85A30',
-            weight: 1,
-            opacity: 0.5
-        }}).addTo(mapObj);
-        
-        polylineCorr = L.polyline([], {{
-            color: '#1D9E75',
-            weight: 1,
-            opacity: 1.0
-        }}).addTo(mapObj);
+    polylineUnc = L.polyline([], {{
+        color: '#D85A30',
+        weight: 1,
+        opacity: 0.5
+    }}).addTo(mapObj);
 
-        // Legend
-        var legend = L.control({{position: 'topright'}});
-        legend.onAdd = function() {{
-            var div = L.DomUtil.create('div');
-            div.innerHTML =
-                '<div style="background:white;padding:8px;border-radius:4px;font-size:12px;line-height:1.8;">' +
-                '<span style="color:#1D9E75;font-weight:bold;">— </span>Corrected<br>' +
-                '<span style="color:#D85A30;font-weight:bold;">— </span>Uncorrected' +
-                '</div>';
-            return div;
-        }};
-        legend.addTo(mapObj);
+    polylineCorr = L.polyline([], {{
+        color: '#1D9E75',
+        weight: 1,
+        opacity: 1.0
+    }}).addTo(mapObj);
 
-        // Play button
-        var btn = L.control({{position: 'bottomright'}});
-        btn.onAdd = function() {{
-            var div = L.DomUtil.create('div');
-            div.innerHTML = '<button id="playBtn" style="' +
-                'padding:8px 16px;font-size:14px;background:#333;' +
-                'color:white;border:none;border-radius:4px;cursor:pointer;">' +
-                '▶ Play</button>';
-            return div;
-        }};
-        btn.addTo(mapObj);
+    // Legend
+    var legend = L.control({{position: 'topright'}});
+    legend.onAdd = function() {{
+        var div = L.DomUtil.create('div');
+        div.innerHTML =
+            '<div style="background:white;padding:8px;border-radius:4px;font-size:12px;line-height:1.8;">' +
+            '<span style="color:#1D9E75;font-weight:bold;">— </span>Corrected<br>' +
+            '<span style="color:#D85A30;font-weight:bold;">— </span>Uncorrected' +
+            '</div>';
+        return div;
+    }};
+    legend.addTo(mapObj);
 
-        document.getElementById('playBtn').addEventListener('click', function() {{
-            if (isPlaying) return;
+    // Timer display
+    var timerControl = L.control({{position: 'bottomleft'}});
+    timerControl.onAdd = function() {{
+        var div = L.DomUtil.create('div');
+        div.innerHTML =
+            '<div id="simTimer" style="' +
+            'background:white;padding:8px 12px;border-radius:4px;' +
+            'font-size:14px;font-weight:bold;">0.0 h</div>';
+        return div;
+    }};
+    timerControl.addTo(mapObj);
 
-            // Reset
-            currentFrame = 0;
-            drawnCorr = [];
-            drawnUnc  = [];
-            polylineCorr.setLatLngs([]);
-            polylineUnc.setLatLngs([]);
-            isPlaying = true;
-            this.textContent = '⏸ Playing...';
-            var btnRef = this;
+    timerBox = document.getElementById('simTimer');
 
-            animationTimer = setInterval(function() {{
-                if (currentFrame >= totalFrames) {{
-                    clearInterval(animationTimer);
-                    isPlaying = false;
-                    btnRef.textContent = '▶ Play';
-                    return;
-                }}
+    // Play button
+    var btn = L.control({{position: 'bottomright'}});
+    btn.onAdd = function() {{
+        var div = L.DomUtil.create('div');
+        div.innerHTML = '<button id="playBtn" style="' +
+            'padding:8px 16px;font-size:14px;background:#333;' +
+            'color:white;border:none;border-radius:4px;cursor:pointer;">' +
+            '▶ Play</button>';
+        return div;
+    }};
+    btn.addTo(mapObj);
 
-                // Add points in batches to keep 10 second duration
-                // regardless of total frame count
-                drawnCorr.push(coordsCorr[currentFrame]);
-                drawnUnc.push(coordsUnc[currentFrame]);
-                polylineCorr.setLatLngs(drawnCorr);
-                polylineUnc.setLatLngs(drawnUnc);
-                currentFrame++;
-            }}, frameInterval);
-        }});
+    document.getElementById('playBtn').addEventListener('click', function() {{
+        if (isPlaying) return;
+
+        // Reset
+        currentFrame = 0;
+        drawnCorr = [];
+        drawnUnc  = [];
+        polylineCorr.setLatLngs([]);
+        polylineUnc.setLatLngs([]);
+        if (timerBox) timerBox.textContent = '0.0 h';
+
+        isPlaying = true;
+        this.textContent = '⏸ Playing...';
+        var btnRef = this;
+
+        animationTimer = setInterval(function() {{
+            if (currentFrame >= totalFrames) {{
+                clearInterval(animationTimer);
+                isPlaying = false;
+                btnRef.textContent = '▶ Play';
+                if (timerBox) timerBox.textContent = '100.0 h';
+                return;
+            }}
+
+            drawnCorr.push(coordsCorr[currentFrame]);
+            drawnUnc.push(coordsUnc[currentFrame]);
+            polylineCorr.setLatLngs(drawnCorr);
+            polylineUnc.setLatLngs(drawnUnc);
+
+            // Map frame to 0 -> 100 hours
+            var simHours = (currentFrame / (totalFrames - 1)) * 100;
+            if (timerBox) timerBox.textContent = simHours.toFixed(1) + ' h';
+
+            currentFrame++;
+        }}, frameInterval);
     }});
-    </script>
-    """
+}});
+</script>
+"""
 
     m.get_root().html.add_child(folium.Element(animation_js))
     
@@ -688,7 +709,7 @@ def plot_on_map_animated(results, lat_deg=53.4670, lon_deg=-2.2305):
 
 
 # Your live GitHub Pages URL
-url = "https://joejackmoore-star.github.io/GPS_MAP/gps_simulation_map.html"
+url = "https://joejackmoore-star.github.io/GPS_MAP/gps_simulation_map_animated.html"
 
 # Generate QR code
 qr = qrcode.make(url)
